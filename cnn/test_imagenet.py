@@ -50,10 +50,10 @@ def main():
     torch.manual_seed(args.seed)
     cudnn.enabled = True
     torch.cuda.manual_seed(args.seed)
-    logging.info("gpu device = %d" % args.gpu)
+    logging.info(f"gpu device = {args.gpu}")
     logging.info("args = %s", args)
 
-    genotype = eval("genotypes.%s" % args.arch)
+    genotype = eval(f"genotypes.{args.arch}")
     model = Network(args.init_channels, CLASSES, args.layers, args.auxiliary, genotype)
     model = model.cuda()
     model.load_state_dict(torch.load(args.model_path)["state_dict"])

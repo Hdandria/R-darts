@@ -9,7 +9,7 @@ INITRANGE = 0.04
 
 class DARTSCell(nn.Module):
     def __init__(self, ninp, nhid, dropouth, dropoutx, genotype=None):
-        super(DARTSCell, self).__init__()
+        super().__init__()
         self.nhid = nhid
         self.dropouth = dropouth
         self.dropoutx = dropoutx
@@ -57,13 +57,13 @@ class DARTSCell(nn.Module):
 
     def _get_activation(self, name):
         if name == "tanh":
-            f = F.tanh
+            f = torch.tanh
         elif name == "relu":
             f = F.relu
         elif name == "sigmoid":
             f = F.sigmoid
         elif name == "identity":
-            f = lambda x: x
+            f = nn.Identity()
         else:
             raise NotImplementedError
         return f
@@ -106,7 +106,7 @@ class RNNModel(nn.Module):
         cell_cls=DARTSCell,
         genotype=None,
     ):
-        super(RNNModel, self).__init__()
+        super().__init__()
         self.lockdrop = LockedDropout()
         self.encoder = nn.Embedding(ntoken, ninp)
 
@@ -148,9 +148,8 @@ class RNNModel(nn.Module):
         new_hidden = []
         raw_outputs = []
         outputs = []
-        for l, rnn in enumerate(self.rnns):
-            current_input = raw_output
-            raw_output, new_h = rnn(raw_output, hidden[l])
+        for layer_index, rnn in enumerate(self.rnns):
+            raw_output, new_h = rnn(raw_output, hidden[layer_index])
             new_hidden.append(new_h)
             raw_outputs.append(raw_output)
         hidden = new_hidden

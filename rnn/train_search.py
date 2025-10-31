@@ -86,9 +86,12 @@ parser.add_argument(
     "--small_batch_size",
     type=int,
     default=-1,
-    help="the batch size for computation. batch_size should be divisible by small_batch_size.\
-                     In our implementation, we compute gradients with small_batch_size multiple times, and accumulate the gradients\
-                     until batch_size is reached. An update step is then performed.",
+    help=(
+        "the batch size for computation. batch_size should be divisible by"
+        " small_batch_size. In our implementation, we compute gradients with"
+        " small_batch_size multiple times, and accumulate the gradients until"
+        " batch_size is reached. An update step is then performed."
+    ),
 )
 parser.add_argument("--max_seq_len_delta", type=int, default=20, help="max sequence length")
 parser.add_argument("--single_gpu", default=True, action="store_false", help="use single GPU")
@@ -190,7 +193,6 @@ def evaluate(data_source, batch_size=10):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     total_loss = 0
-    ntokens = len(corpus.dictionary)
     hidden = model.init_hidden(batch_size)
     for i in range(0, data_source.size(0) - 1, args.bptt):
         data, targets = get_batch(data_source, i, args, evaluation=True)
@@ -213,7 +215,6 @@ def train():
     # Turn on training mode which enables dropout.
     total_loss = 0
     start_time = time.time()
-    ntokens = len(corpus.dictionary)
     hidden = [
         model.init_hidden(args.small_batch_size)
         for _ in range(args.batch_size // args.small_batch_size)
@@ -347,7 +348,8 @@ for epoch in range(1, args.epochs + 1):
     val_loss = evaluate(val_data, eval_batch_size)
     logging.info("-" * 89)
     logging.info(
-        f"| end of epoch {epoch:3d} | time: {time.time() - epoch_start_time:5.2f}s | valid loss {val_loss:5.2f} | valid ppl {math.exp(val_loss):8.2f}"
+        f"| end of epoch {epoch:3d} | time: {time.time() - epoch_start_time:5.2f}s "
+        f"| valid loss {val_loss:5.2f} | valid ppl {math.exp(val_loss):8.2f}"
     )
     logging.info("-" * 89)
 

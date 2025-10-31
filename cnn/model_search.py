@@ -1,15 +1,16 @@
-from genotypes import PRIMITIVES, Genotype
 import numpy as np
-from operations import *
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .genotypes import PRIMITIVES, Genotype
+from .operations import OPS, FactorizedReduce, ReLUConvBN
+
 
 class MixedOp(nn.Module):
     def __init__(self, C, stride, primitive=PRIMITIVES, op_list=OPS):
-        super(MixedOp, self).__init__()
+        super().__init__()
         self._ops = nn.ModuleList()
         self.primitive = primitive
         self.op_list = OPS
@@ -20,12 +21,12 @@ class MixedOp(nn.Module):
             self._ops.append(op)
 
     def forward(self, x, weights):
-        return sum(w * op(x) for w, op in zip(weights, self._ops))
+        return sum(w * op(x) for w, op in zip(weights, self._ops, strict=True))
 
 
 class Cell(nn.Module):
     def __init__(self, steps, multiplier, C_prev_prev, C_prev, C, reduction, reduction_prev):
-        super(Cell, self).__init__()
+        super().__init__()
         self.reduction = reduction
 
         if reduction_prev:
@@ -50,7 +51,7 @@ class Cell(nn.Module):
 
         states = [s0, s1]
         offset = 0
-        for i in range(self._steps):
+        for _i in range(self._steps):
             s = sum(self._ops[offset + j](h, weights[offset + j]) for j, h in enumerate(states))
             offset += len(states)
             states.append(s)
@@ -62,7 +63,7 @@ class Network(nn.Module):
     def __init__(
         self, C, num_classes, layers, criterion, steps=4, multiplier=4, stem_multiplier=3
     ):
-        super(Network, self).__init__()
+        super().__init__()
         self._C = C
         self._num_classes = num_classes
         self._layers = layers
@@ -96,13 +97,13 @@ class Network(nn.Module):
 
     def new(self):
         model_new = Network(self._C, self._num_classes, self._layers, self._criterion).cuda()
-        for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
+        for x, y in zip(model_new.arch_parameters(), self.arch_parameters(), strict=True):
             x.data.copy_(y.data)
         return model_new
 
     def forward(self, input):
         s0 = s1 = self.stem(input)
-        for i, cell in enumerate(self.cells):
+        for _i, cell in enumerate(self.cells):
             if cell.reduction:
                 weights = F.softmax(self.alphas_reduce, dim=-1)
             else:

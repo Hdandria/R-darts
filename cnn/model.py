@@ -1,5 +1,4 @@
-from operations import *
-from operations import ReLUConvBN
+from operations import OPS, FactorizedReduce, Identity, ReLUConvBN
 import torch
 import torch.nn as nn
 from utils import drop_path
@@ -7,7 +6,7 @@ from utils import drop_path
 
 class Cell(nn.Module):
     def __init__(self, genotype, C_prev_prev, C_prev, C, reduction, reduction_prev, scnd=False):
-        super(Cell, self).__init__()
+        super().__init__()
         self.C_prev_prev = C_prev_prev
         self.C_prev = C_prev
         self.C = C
@@ -19,14 +18,14 @@ class Cell(nn.Module):
         self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0)
 
         if scnd:
-            op_names, indices = zip(*genotype)
+            op_names, indices = zip(*genotype, strict=True)
             concat = [len(genotype) // 2 + 1]
         else:
             if reduction:
-                op_names, indices = zip(*genotype.reduce)
+                op_names, indices = zip(*genotype.reduce, strict=True)
                 concat = genotype.reduce_concat
             else:
-                op_names, indices = zip(*genotype.normal)
+                op_names, indices = zip(*genotype.normal, strict=True)
                 concat = genotype.normal_concat
         self._compile(C, op_names, indices, concat, reduction)
 
@@ -37,7 +36,7 @@ class Cell(nn.Module):
         self.multiplier = len(concat)
 
         self._ops = nn.ModuleList()
-        for name, index in zip(op_names, indices):
+        for name, index in zip(op_names, indices, strict=True):
             stride = 2 if reduction and index < 2 else 1
             op = OPS[name](C, stride, True)
             self._ops += [op]
@@ -85,7 +84,7 @@ class Cell(nn.Module):
 class AuxiliaryHeadCIFAR(nn.Module):
     def __init__(self, C, num_classes):
         """assuming input size 8x8"""
-        super(AuxiliaryHeadCIFAR, self).__init__()
+        super().__init__()
         self.features = nn.Sequential(
             nn.ReLU(inplace=True),
             nn.AvgPool2d(5, stride=3, padding=0, count_include_pad=False),  # image size = 2 x 2
@@ -107,7 +106,7 @@ class AuxiliaryHeadCIFAR(nn.Module):
 class AuxiliaryHeadImageNet(nn.Module):
     def __init__(self, C, num_classes):
         """assuming input size 14x14"""
-        super(AuxiliaryHeadImageNet, self).__init__()
+        super().__init__()
         self.features = nn.Sequential(
             nn.ReLU(inplace=True),
             nn.AvgPool2d(5, stride=2, padding=0, count_include_pad=False),
@@ -130,7 +129,7 @@ class AuxiliaryHeadImageNet(nn.Module):
 
 class NetworkCIFAR(nn.Module):
     def __init__(self, C, num_classes, layers, auxiliary, genotype):
-        super(NetworkCIFAR, self).__init__()
+        super().__init__()
         self._layers = layers
         self._auxiliary = auxiliary
 
@@ -176,7 +175,7 @@ class NetworkCIFAR(nn.Module):
 
 class NetworkImageNet(nn.Module):
     def __init__(self, C, num_classes, layers, auxiliary, genotype):
-        super(NetworkImageNet, self).__init__()
+        super().__init__()
         self._layers = layers
         self._auxiliary = auxiliary
 

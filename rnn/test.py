@@ -58,7 +58,10 @@ parser.add_argument(
     "--beta",
     type=float,
     default=1e-3,
-    help="beta slowness regularization applied on RNN activiation (beta = 0 means no regularization)",
+    help=(
+        "beta slowness regularization applied on RNN activiation (beta = 0 means no"
+        " regularization)"
+    ),
 )
 parser.add_argument(
     "--wdecay", type=float, default=5e-7, help="weight decay applied to all weights"
@@ -98,7 +101,6 @@ def evaluate(data_source, batch_size=10):
     # Turn on evaluation mode which disables dropout.
     parallel_model.eval()
     total_loss = 0
-    ntokens = len(corpus.dictionary)
     hidden = parallel_model.init_hidden(batch_size)
     for i in range(0, data_source.size(0) - 1, args.bptt):
         print(i, data_source.size(0) - 1)

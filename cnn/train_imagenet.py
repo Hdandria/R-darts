@@ -62,7 +62,7 @@ CLASSES = 1000
 
 class CrossEntropyLabelSmooth(nn.Module):
     def __init__(self, num_classes, epsilon):
-        super(CrossEntropyLabelSmooth, self).__init__()
+        super().__init__()
         self.num_classes = num_classes
         self.epsilon = epsilon
         self.logsoftmax = nn.LogSoftmax(dim=1)
@@ -86,10 +86,10 @@ def main():
     torch.manual_seed(args.seed)
     cudnn.enabled = True
     torch.cuda.manual_seed(args.seed)
-    logging.info("gpu device = %d" % args.gpu)
+    logging.info(f"gpu device = {args.gpu}")
     logging.info("args = %s", args)
 
-    genotype = eval("genotypes.%s" % args.arch)
+    genotype = eval(f"genotypes.{args.arch}")
     model = Network(args.init_channels, CLASSES, args.layers, args.auxiliary, genotype)
     if args.parallel:
         model = nn.DataParallel(model).cuda()

@@ -1,6 +1,6 @@
 import os
 import shutil
-from typing import List, overload
+from typing import overload
 
 import torch
 from torch.autograd import Variable
@@ -13,7 +13,7 @@ def repackage_hidden(h: torch.Tensor) -> torch.Tensor:
 
 
 @overload
-def repackage_hidden(h: List[torch.Tensor]) -> List[torch.Tensor]:
+def repackage_hidden(h: list[torch.Tensor]) -> list[torch.Tensor]:
     ...
 
 
@@ -93,7 +93,7 @@ def embedded_dropout(embed, words, dropout=0.1, scale=None):
 
 class LockedDropout(nn.Module):
     def __init__(self):
-        super(LockedDropout, self).__init__()
+        super().__init__()
 
     def forward(self, x, dropout=0.5):
         if not self.training or not dropout:

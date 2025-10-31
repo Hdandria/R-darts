@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 class DARTSCellSearch(DARTSCell):
     def __init__(self, ninp, nhid, dropouth, dropoutx):
-        super(DARTSCellSearch, self).__init__(ninp, nhid, dropouth, dropoutx, genotype=None)
+        super().__init__(ninp, nhid, dropouth, dropoutx, genotype=None)
         self.bn = nn.BatchNorm1d(nhid, affine=False)
 
     def cell(self, x, h_prev, x_mask, h_mask):
@@ -47,13 +47,15 @@ class DARTSCellSearch(DARTSCell):
 
 class RNNModelSearch(RNNModel):
     def __init__(self, *args):
-        super(RNNModelSearch, self).__init__(*args, cell_cls=DARTSCellSearch, genotype=None)
+        super().__init__(*args, cell_cls=DARTSCellSearch, genotype=None)
         self._args = args
         self._initialize_arch_parameters()
 
     def new(self):
         model_new = RNNModelSearch(*self._args)
-        for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
+        for x, y in zip(
+            model_new.arch_parameters(), self.arch_parameters(), strict=True
+        ):
             x.data.copy_(y.data)
         return model_new
 

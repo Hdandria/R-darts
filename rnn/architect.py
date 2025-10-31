@@ -88,10 +88,10 @@ class Architect:
             vector, hidden_train, input_train, target_train, r=1e-2
         )
 
-        for g, ig in zip(dalpha, implicit_grads):
+        for g, ig in zip(dalpha, implicit_grads, strict=True):
             g.data.sub_(eta * clip_coef, ig.data)
 
-        for v, g in zip(self.model.arch_parameters(), dalpha):
+        for v, g in zip(self.model.arch_parameters(), dalpha, strict=True):
             if v.grad is None:
                 v.grad = Variable(g.data)
             else:
@@ -115,17 +115,17 @@ class Architect:
 
     def _hessian_vector_product(self, vector, hidden, input, target, r=1e-2):
         R = r / _concat(vector).norm()
-        for p, v in zip(self.model.parameters(), vector):
+        for p, v in zip(self.model.parameters(), vector, strict=True):
             p.data.add_(R, v)
         loss, _ = self.model._loss(hidden, input, target)
         grads_p = torch.autograd.grad(loss, self.model.arch_parameters())
 
-        for p, v in zip(self.model.parameters(), vector):
+        for p, v in zip(self.model.parameters(), vector, strict=True):
             p.data.sub_(2 * R, v)
         loss, _ = self.model._loss(hidden, input, target)
         grads_n = torch.autograd.grad(loss, self.model.arch_parameters())
 
-        for p, v in zip(self.model.parameters(), vector):
+        for p, v in zip(self.model.parameters(), vector, strict=True):
             p.data.add_(R, v)
 
-        return [(x - y).div_(2 * R) for x, y in zip(grads_p, grads_n)]
+        return [(x - y).div_(2 * R) for x, y in zip(grads_p, grads_n, strict=True)]

@@ -26,7 +26,7 @@ class Architect:
             moment = _concat(
                 network_optimizer.state[v]["momentum_buffer"] for v in self.model.parameters()
             ).mul_(self.network_momentum)
-        except:
+        except Exception:
             moment = torch.zeros_like(theta)
         dtheta = (
             _concat(torch.autograd.grad(loss, self.model.parameters())).data
@@ -71,10 +71,10 @@ class Architect:
         vector = [v.grad.data for v in unrolled_model.parameters()]
         implicit_grads = self._hessian_vector_product(vector, input_train, target_train)
 
-        for g, ig in zip(dalpha, implicit_grads):
+        for g, ig in zip(dalpha, implicit_grads, strict=True):
             g.data.sub_(ig.data, alpha=eta)
 
-        for v, g in zip(self.model.arch_parameters(), dalpha):
+        for v, g in zip(self.model.arch_parameters(), dalpha, strict=True):
             if v.grad is None:
                 v.grad = Variable(g.data)
             else:
@@ -100,17 +100,17 @@ class Architect:
 
     def _hessian_vector_product(self, vector, input, target, r=1e-2):
         R = r / _concat(vector).norm()
-        for p, v in zip(self.model.parameters(), vector):
+        for p, v in zip(self.model.parameters(), vector, strict=True):
             p.data.add_(v, alpha=R)
         loss = self.model._loss(input, target)
         grads_p = torch.autograd.grad(loss, self.model.arch_parameters())
 
-        for p, v in zip(self.model.parameters(), vector):
+        for p, v in zip(self.model.parameters(), vector, strict=True):
             p.data.sub_(v, alpha=2 * R)
         loss = self.model._loss(input, target)
         grads_n = torch.autograd.grad(loss, self.model.arch_parameters())
 
-        for p, v in zip(self.model.parameters(), vector):
+        for p, v in zip(self.model.parameters(), vector, strict=True):
             p.data.add_(v, alpha=R)
 
-        return [(x - y).div_(2 * R) for x, y in zip(grads_p, grads_n)]
+        return [(x - y).div_(2 * R) for x, y in zip(grads_p, grads_n, strict=True)]

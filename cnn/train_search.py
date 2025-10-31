@@ -75,8 +75,8 @@ def main():
     torch.manual_seed(args.seed)
     cudnn.enabled = True
     torch.cuda.manual_seed(args.seed)
-    logging.info("gpu device = %d" % args.gpu)
-    logging.info("args = %s", args)
+    logging.info(f"gpu device = {args.gpu}")
+    logging.info(f"args = {args}")
 
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.cuda()
