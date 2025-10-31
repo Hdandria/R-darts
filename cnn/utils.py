@@ -32,7 +32,7 @@ def accuracy(output, target, topk=(1,)):
 
   res = []
   for k in topk:
-    correct_k = correct[:k].view(-1).float().sum(0)
+    correct_k = correct[:k].reshape(-1).float().sum(0)
     res.append(correct_k.mul_(100.0/batch_size))
   return res
 
@@ -80,8 +80,8 @@ def _data_transforms_cifar10(args):
 
 
 def count_parameters_in_MB(model):
-  return np.sum(np.prod(v.size()) for name, v in model.named_parameters() if "auxiliary" not in name)/1e6
 
+  return np.sum(np.prod(v.size()) for name, v in model.named_parameters() if "auxiliary" not in name)/1e6
 
 def save_checkpoint(state, is_best, save):
   filename = os.path.join(save, 'checkpoint.pth.tar')

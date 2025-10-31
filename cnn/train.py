@@ -95,11 +95,11 @@ def main():
   scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, float(args.epochs))
 
   for epoch in range(args.epochs):
-    scheduler.step()
-    logging.info('epoch %d lr %e', epoch, scheduler.get_lr()[0])
+    logging.info('epoch %d lr %e', epoch, scheduler.get_last_lr()[0])
     model.drop_path_prob = args.drop_path_prob * epoch / args.epochs
 
     train_acc, train_obj = train(train_queue, model, criterion, optimizer)
+    scheduler.step()
     logging.info('train_acc %f', train_acc)
 
     valid_acc, valid_obj = infer(valid_queue, model, criterion)
@@ -116,7 +116,7 @@ def train(train_queue, model, criterion, optimizer):
 
   for step, (input, target) in enumerate(train_queue):
     input = Variable(input).cuda()
-    target = Variable(target).cuda(async=True)
+    target = Variable(target).cuda(non_blocking=True)
 
     optimizer.zero_grad()
     logits, logits_aux = model(input)
@@ -125,14 +125,14 @@ def train(train_queue, model, criterion, optimizer):
       loss_aux = criterion(logits_aux, target)
       loss += args.auxiliary_weight*loss_aux
     loss.backward()
-    nn.utils.clip_grad_norm(model.parameters(), args.grad_clip)
+    nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
     optimizer.step()
 
     prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
     n = input.size(0)
-    objs.update(loss.data[0], n)
-    top1.update(prec1.data[0], n)
-    top5.update(prec5.data[0], n)
+    objs.update(loss.data, n)
+    top1.update(prec1.data, n)
+    top5.update(prec5.data, n)
 
     if step % args.report_freq == 0:
       logging.info('train %03d %e %f %f', step, objs.avg, top1.avg, top5.avg)
@@ -148,16 +148,16 @@ def infer(valid_queue, model, criterion):
 
   for step, (input, target) in enumerate(valid_queue):
     input = Variable(input, volatile=True).cuda()
-    target = Variable(target, volatile=True).cuda(async=True)
+    target = Variable(target, volatile=True).cuda(non_blocking =True)
 
     logits, _ = model(input)
     loss = criterion(logits, target)
 
     prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
     n = input.size(0)
-    objs.update(loss.data[0], n)
-    top1.update(prec1.data[0], n)
-    top5.update(prec5.data[0], n)
+    objs.update(loss.data, n)
+    top1.update(prec1.data, n)
+    top5.update(prec5.data, n)
 
     if step % args.report_freq == 0:
       logging.info('valid %03d %e %f %f', step, objs.avg, top1.avg, top5.avg)

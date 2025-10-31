@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from genotypes import *
+
 
 OPS = {
   'none' : lambda C, stride, affine: Zero(stride),
@@ -20,7 +22,6 @@ OPS = {
 }
 
 class ReLUConvBN(nn.Module):
-
   def __init__(self, C_in, C_out, kernel_size, stride, padding, affine=True):
     super(ReLUConvBN, self).__init__()
     self.op = nn.Sequential(

@@ -5,18 +5,21 @@ from operations import *
 from torch.autograd import Variable
 from genotypes import PRIMITIVES
 from genotypes import Genotype
-
+import numpy as np
 
 class MixedOp(nn.Module):
 
-  def __init__(self, C, stride):
+  def __init__(self, C, stride, primitive=PRIMITIVES, op_list = OPS):
     super(MixedOp, self).__init__()
     self._ops = nn.ModuleList()
-    for primitive in PRIMITIVES:
-      op = OPS[primitive](C, stride, False)
+    self.primitive=primitive
+    self.op_list = OPS
+    for primitive in self.primitive:
+      op = op_list[primitive](C, stride, False)
       if 'pool' in primitive:
         op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
       self._ops.append(op)
+
 
   def forward(self, x, weights):
     return sum(w * op(x) for w, op in zip(weights, self._ops))
@@ -41,7 +44,7 @@ class Cell(nn.Module):
     for i in range(self._steps):
       for j in range(2+i):
         stride = 2 if reduction and j < 2 else 1
-        op = MixedOp(C, stride)
+        op = MixedOp(C, stride, PRIMITIVES, OPS)
         self._ops.append(op)
 
   def forward(self, s0, s1, weights):
@@ -131,7 +134,6 @@ class Network(nn.Module):
     return self._arch_parameters
 
   def genotype(self):
-
     def _parse(weights):
       gene = []
       n = 2
@@ -153,6 +155,34 @@ class Network(nn.Module):
 
     gene_normal = _parse(F.softmax(self.alphas_normal, dim=-1).data.cpu().numpy())
     gene_reduce = _parse(F.softmax(self.alphas_reduce, dim=-1).data.cpu().numpy())
+
+    concat = range(2+self._steps-self._multiplier, self._steps+2)
+    genotype = Genotype(
+      normal=gene_normal, normal_concat=concat,
+      reduce=gene_reduce, reduce_concat=concat
+    )
+    return genotype
+
+  def genotype_random(self):
+    def _parse_random(weights):
+      gene = []
+      n = 2
+      start = 0
+      for i in range(self._steps):
+        end = start + n
+        W = weights[start:end].copy()
+        edges = sorted(range(i + 2), key=lambda x: -np.random.choice(W[x], p = W[x]))[:2]
+        for edge in edges:
+          k_best=0
+          while(k_best==0):        
+            k_best = np.random.choice(range(len(W[edge])), p=W[edge])
+          gene.append((PRIMITIVES[k_best], edge))
+        start = end
+        n += 1
+      return gene
+
+    gene_normal = _parse_random(F.softmax(self.alphas_normal, dim=-1).data.cpu().numpy())
+    gene_reduce = _parse_random(F.softmax(self.alphas_reduce, dim=-1).data.cpu().numpy())
 
     concat = range(2+self._steps-self._multiplier, self._steps+2)
     genotype = Genotype(
