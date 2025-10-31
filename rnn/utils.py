@@ -1,15 +1,28 @@
+import os
+import shutil
+from typing import List, overload
+
 import torch
-import torch.nn as nn
-import os, shutil
-import numpy as np
 from torch.autograd import Variable
+import torch.nn as nn
+
+
+@overload
+def repackage_hidden(h: torch.Tensor) -> torch.Tensor:
+    ...
+
+
+@overload
+def repackage_hidden(h: List[torch.Tensor]) -> List[torch.Tensor]:
+    ...
 
 
 def repackage_hidden(h):
-    if type(h) == Variable:
-        return Variable(h.data)
+    """Wraps hidden states in new Tensors, to detach them from their history."""
+    if isinstance(h, torch.Tensor):
+        return h.detach()
     else:
-        return tuple(repackage_hidden(v) for v in h)
+        return [repackage_hidden(v) for v in h]
 
 
 def batchify(data, bsz, args):
@@ -24,8 +37,8 @@ def batchify(data, bsz, args):
 
 def get_batch(source, i, args, seq_len=None, evaluation=False):
     seq_len = min(seq_len if seq_len else args.bptt, len(source) - 1 - i)
-    data = Variable(source[i:i+seq_len], volatile=evaluation)
-    target = Variable(source[i+1:i+1+seq_len])
+    data = Variable(source[i : i + seq_len], volatile=evaluation)
+    target = Variable(source[i + 1 : i + 1 + seq_len])
     return data, target
 
 
@@ -33,27 +46,29 @@ def create_exp_dir(path, scripts_to_save=None):
     if not os.path.exists(path):
         os.mkdir(path)
 
-    print('Experiment dir : {}'.format(path))
+    print(f"Experiment dir : {path}")
     if scripts_to_save is not None:
-        os.mkdir(os.path.join(path, 'scripts'))
+        os.mkdir(os.path.join(path, "scripts"))
         for script in scripts_to_save:
-            dst_file = os.path.join(path, 'scripts', os.path.basename(script))
+            dst_file = os.path.join(path, "scripts", os.path.basename(script))
             shutil.copyfile(script, dst_file)
 
 
 def save_checkpoint(model, optimizer, epoch, path, finetune=False):
     if finetune:
-        torch.save(model, os.path.join(path, 'finetune_model.pt'))
-        torch.save(optimizer.state_dict(), os.path.join(path, 'finetune_optimizer.pt'))
+        torch.save(model, os.path.join(path, "finetune_model.pt"))
+        torch.save(optimizer.state_dict(), os.path.join(path, "finetune_optimizer.pt"))
     else:
-        torch.save(model, os.path.join(path, 'model.pt'))
-        torch.save(optimizer.state_dict(), os.path.join(path, 'optimizer.pt'))
-    torch.save({'epoch': epoch+1}, os.path.join(path, 'misc.pt'))
+        torch.save(model, os.path.join(path, "model.pt"))
+        torch.save(optimizer.state_dict(), os.path.join(path, "optimizer.pt"))
+    torch.save({"epoch": epoch + 1}, os.path.join(path, "misc.pt"))
 
 
 def embedded_dropout(embed, words, dropout=0.1, scale=None):
     if dropout:
-        mask = embed.weight.data.new().resize_((embed.weight.size(0), 1)).bernoulli_(1 - dropout).expand_as(embed.weight) / (1 - dropout)
+        mask = embed.weight.data.new().resize_((embed.weight.size(0), 1)).bernoulli_(
+            1 - dropout
+        ).expand_as(embed.weight) / (1 - dropout)
         mask = Variable(mask)
         masked_embed_weight = mask * embed.weight
     else:
@@ -64,9 +79,14 @@ def embedded_dropout(embed, words, dropout=0.1, scale=None):
     padding_idx = embed.padding_idx
     if padding_idx is None:
         padding_idx = -1
-    X = embed._backend.Embedding.apply(words, masked_embed_weight,
-        padding_idx, embed.max_norm, embed.norm_type,
-        embed.scale_grad_by_freq, embed.sparse
+    X = embed._backend.Embedding.apply(
+        words,
+        masked_embed_weight,
+        padding_idx,
+        embed.max_norm,
+        embed.norm_type,
+        embed.scale_grad_by_freq,
+        embed.sparse,
     )
     return X
 
@@ -90,4 +110,3 @@ def mask2d(B, D, keep_prob, cuda=True):
     if cuda:
         m = m.cuda()
     return m
-
