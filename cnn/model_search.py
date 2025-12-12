@@ -1,13 +1,13 @@
+from collections.abc import Callable
+
+from genotypes import PRIMITIVES as DEFAULT_PRIMITIVES
+from genotypes import Genotype
 import numpy as np
+from operations import OPS as DEFAULT_OPS
+from operations import FactorizedReduce, ReLUConvBN
 import torch
-from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Dict, Callable, Any, Tuple, Optional
-
-from .genotypes import Genotype
-from .operations import FactorizedReduce, ReLUConvBN, OPS as DEFAULT_OPS
-from .genotypes import PRIMITIVES as DEFAULT_PRIMITIVES
 
 
 class MixedOp(nn.Module):
@@ -15,8 +15,8 @@ class MixedOp(nn.Module):
         self,
         C: int,
         stride: int,
-        primitive: List[str] = DEFAULT_PRIMITIVES,
-        op_list: Dict[str, Callable] = DEFAULT_OPS,
+        primitive: list[str] = DEFAULT_PRIMITIVES,
+        op_list: dict[str, Callable] = DEFAULT_OPS,
     ):
         super().__init__()
         self._ops = nn.ModuleList()
@@ -42,8 +42,8 @@ class Cell(nn.Module):
         C: int,
         reduction: bool,
         reduction_prev: bool,
-        primitives: List[str] = DEFAULT_PRIMITIVES,
-        ops: Dict[str, Callable] = DEFAULT_OPS,
+        primitives: list[str] = DEFAULT_PRIMITIVES,
+        ops: dict[str, Callable] = DEFAULT_OPS,
     ):
         super().__init__()
         self.reduction = reduction
@@ -90,8 +90,8 @@ class Network(nn.Module):
         steps: int = 4,
         multiplier: int = 4,
         stem_multiplier: int = 3,
-        primitives: List[str] = DEFAULT_PRIMITIVES,
-        ops: Dict[str, Callable] = DEFAULT_OPS,
+        primitives: list[str] = DEFAULT_PRIMITIVES,
+        ops: dict[str, Callable] = DEFAULT_OPS,
     ):
         super().__init__()
         self._C = C
@@ -150,7 +150,7 @@ class Network(nn.Module):
         )
         if torch.cuda.is_available():
             model_new = model_new.cuda()
-            
+
         for x, y in zip(model_new.arch_parameters(), self.arch_parameters(), strict=True):
             x.data.copy_(y.data)
         return model_new
@@ -175,22 +175,22 @@ class Network(nn.Module):
         k = sum(1 for i in range(self._steps) for n in range(2 + i))
         num_ops = len(self.primitives)
 
-        self.alphas_normal = Variable(1e-3 * torch.randn(k, num_ops), requires_grad=True)
-        self.alphas_reduce = Variable(1e-3 * torch.randn(k, num_ops), requires_grad=True)
+        self.alphas_normal = (1e-3 * torch.randn(k, num_ops)).requires_grad_(True)
+        self.alphas_reduce = (1e-3 * torch.randn(k, num_ops)).requires_grad_(True)
         if torch.cuda.is_available():
-            self.alphas_normal = self.alphas_normal.cuda()
-            self.alphas_reduce = self.alphas_reduce.cuda()
-            
+            self.alphas_normal = self.alphas_normal.cuda().requires_grad_(True)
+            self.alphas_reduce = self.alphas_reduce.cuda().requires_grad_(True)
+
         self._arch_parameters = [
             self.alphas_normal,
             self.alphas_reduce,
         ]
 
-    def arch_parameters(self) -> List[torch.Tensor]:
+    def arch_parameters(self) -> list[torch.Tensor]:
         return self._arch_parameters
 
     def genotype(self) -> Genotype:
-        def _parse(weights: np.ndarray) -> List[Tuple[str, int]]:
+        def _parse(weights: np.ndarray) -> list[tuple[str, int]]:
             gene = []
             n = 2
             start = 0
@@ -229,32 +229,75 @@ class Network(nn.Module):
         )
         return genotype
 
-    def genotype_random(self) -> Genotype:
-        def _parse_random(weights: np.ndarray) -> List[Tuple[str, int]]:
-            gene = []
-            n = 2
-            start = 0
-            for i in range(self._steps):
-                end = start + n
-                W = weights[start:end].copy()
-                edges = sorted(range(i + 2), key=lambda x: -np.random.choice(W[x], p=W[x]))[:2]
-                for edge in edges:
-                    k_best = 0
-                    while k_best == 0:
-                        k_best = np.random.choice(range(len(W[edge])), p=W[edge])
-                    gene.append((self.primitives[k_best], edge))
-                start = end
-                n += 1
-            return gene
+    def sample_genotypes(self, k: int = 1) -> list[Genotype]:
+        """
+        Samples k distinct genotypes from the architecture distribution.
+        This provides diversity for the recursive search step.
+        """
+        genotypes = []
+        for _ in range(k):
+            gene_normal = self._sample_cell(self.alphas_normal)
+            gene_reduce = self._sample_cell(self.alphas_reduce)
 
-        gene_normal = _parse_random(F.softmax(self.alphas_normal, dim=-1).data.cpu().numpy())
-        gene_reduce = _parse_random(F.softmax(self.alphas_reduce, dim=-1).data.cpu().numpy())
+            concat = range(2 + self._steps - self._multiplier, self._steps + 2)
+            genotype = Genotype(
+                normal=gene_normal,
+                normal_concat=concat,
+                reduce=gene_reduce,
+                reduce_concat=concat,
+            )
+            genotypes.append(genotype)
+        return genotypes
 
-        concat = range(2 + self._steps - self._multiplier, self._steps + 2)
-        genotype = Genotype(
-            normal=gene_normal,
-            normal_concat=concat,
-            reduce=gene_reduce,
-            reduce_concat=concat,
-        )
-        return genotype
+    def _sample_cell(self, alphas) -> list[tuple[str, int]]:
+        weights = F.softmax(alphas, dim=-1).data.cpu().numpy()
+        gene = []
+        n = 2
+        start = 0
+        none_idx = self.primitives.index("none")
+
+        for _i in range(self._steps):
+            end = start + n
+            W = weights[start:end].copy()
+
+            # 1. Edge Selection (Probabilistic)
+            # We calculate an "existence probability" for each edge based on sum of non-none ops
+            edge_scores = []
+            for j in range(len(W)):
+                prob_edge_active = np.sum(W[j]) - W[j][none_idx]
+                edge_scores.append(prob_edge_active)
+
+            # Normalize to valid probabilities
+            edge_probs = np.array(edge_scores)
+            sum_probs = np.sum(edge_probs)
+            if sum_probs > 0:
+                edge_probs = edge_probs / sum_probs
+            else:
+                # Fallback to uniform if all are none (unlikely)
+                edge_probs = np.ones_like(edge_probs) / len(edge_probs)
+
+            # Sample 2 edges without replacement
+            selected_edges = np.random.choice(range(n), size=2, replace=False, p=edge_probs)
+
+            # 2. Op Selection (Probabilistic) for selected edges
+            for j in selected_edges:
+                # Sample op from non-none ops
+                op_probs = W[j].copy()
+                op_probs[none_idx] = 0 # Mask 'none'
+                sum_op_probs = np.sum(op_probs)
+
+                if sum_op_probs > 0:
+                    op_probs = op_probs / sum_op_probs
+                    k_sampled = np.random.choice(range(len(op_probs)), p=op_probs)
+                else:
+                    # Fallback: pick any non-none op (should not happen if edge was selected)
+                    k_sampled = np.random.choice([x for x in range(len(op_probs)) if x != none_idx])
+
+                gene.append((self.primitives[k_sampled], int(j)))
+
+            start = end
+            n += 1
+
+        # Sort by node index to match standard format
+        gene.sort(key=lambda x: x[1])
+        return gene

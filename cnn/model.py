@@ -1,8 +1,10 @@
-from operations import OPS as DEFAULT_OPS, FactorizedReduce, Identity, ReLUConvBN
+
+from operations import OPS as DEFAULT_OPS
+from operations import FactorizedReduce, Identity, ReLUConvBN
 import torch
 import torch.nn as nn
 from utils import drop_path
-from typing import Dict, Callable
+
 
 class Cell(nn.Module):
     def __init__(self, genotype, C_prev_prev, C_prev, C, reduction, reduction_prev, ops=DEFAULT_OPS):
@@ -52,7 +54,7 @@ class Cell(nn.Module):
 
             h1 = op1(h1)
             h2 = op2(h2)
-            
+
             if self.training and drop_prob > 0.0:
                 if not isinstance(op1, Identity):
                     h1 = drop_path(h1, drop_prob)

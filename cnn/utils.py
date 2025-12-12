@@ -1,3 +1,4 @@
+import argparse
 import os
 import shutil
 
@@ -8,21 +9,21 @@ import torchvision.transforms as transforms
 
 
 class AvgrageMeter:
-    def __init__(self):
+    def __init__(self) -> None:
         self.reset()
 
-    def reset(self):
-        self.avg = 0
-        self.sum = 0
+    def reset(self) -> None:
+        self.avg = 0.0
+        self.sum = 0.0
         self.cnt = 0
 
-    def update(self, val, n=1):
+    def update(self, val: float, n: int = 1) -> None:
         self.sum += val * n
         self.cnt += n
         self.avg = self.sum / self.cnt
 
 
-def accuracy(output, target, topk=(1,)):
+def accuracy(output: torch.Tensor, target: torch.Tensor, topk: tuple[int, ...] = (1,)) -> list[torch.Tensor]:
     maxk = max(topk)
     batch_size = target.size(0)
 
@@ -38,10 +39,10 @@ def accuracy(output, target, topk=(1,)):
 
 
 class Cutout:
-    def __init__(self, length):
+    def __init__(self, length: int) -> None:
         self.length = length
 
-    def __call__(self, img):
+    def __call__(self, img: torch.Tensor) -> torch.Tensor:
         h, w = img.size(1), img.size(2)
         mask = np.ones((h, w), np.float32)
         y = np.random.randint(h)
@@ -59,7 +60,7 @@ class Cutout:
         return img
 
 
-def _data_transforms_cifar10(args):
+def _data_transforms_cifar10(args: argparse.Namespace) -> tuple[transforms.Compose, transforms.Compose]:
     CIFAR_MEAN = [0.49139968, 0.48215827, 0.44653124]
     CIFAR_STD = [0.24703233, 0.24348505, 0.26158768]
 
@@ -83,7 +84,7 @@ def _data_transforms_cifar10(args):
     return train_transform, valid_transform
 
 
-def count_parameters_in_MB(model):
+def count_parameters_in_MB(model: torch.nn.Module) -> float:
     return (
         np.sum(
             [
@@ -96,7 +97,7 @@ def count_parameters_in_MB(model):
     )
 
 
-def save_checkpoint(state, is_best, save):
+def save_checkpoint(state: dict, is_best: bool, save: str) -> None:
     filename = os.path.join(save, "checkpoint.pth.tar")
     torch.save(state, filename)
     if is_best:
@@ -104,15 +105,15 @@ def save_checkpoint(state, is_best, save):
         shutil.copyfile(filename, best_filename)
 
 
-def save(model, model_path):
+def save(model: torch.nn.Module, model_path: str) -> None:
     torch.save(model.state_dict(), model_path)
 
 
-def load(model, model_path):
+def load(model: torch.nn.Module, model_path: str) -> None:
     model.load_state_dict(torch.load(model_path))
 
 
-def drop_path(x, drop_prob):
+def drop_path(x: torch.Tensor, drop_prob: float) -> torch.Tensor:
     if drop_prob > 0.0:
         keep_prob = 1.0 - drop_prob
         mask = Variable(
@@ -123,7 +124,7 @@ def drop_path(x, drop_prob):
     return x
 
 
-def create_exp_dir(path, scripts_to_save=None):
+def create_exp_dir(path: str, scripts_to_save: list[str] | None = None) -> None:
     if not os.path.exists(path):
         os.mkdir(path)
     print(f"Experiment dir : {path}")

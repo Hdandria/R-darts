@@ -117,3 +117,13 @@ Session.vim
 *~
 # Auto-generated tag files
 tags
+
+# LaTeX
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk

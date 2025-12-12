@@ -5,116 +5,131 @@ import os
 import sys
 import time
 
+import genotypes as genotypes_module
 from model import NetworkCIFAR as Network
-from operations import OPS, CellOp
-from genotypes import PRIMITIVES
-import genotypes as genotypes_module 
 import numpy as np
+from operations import OPS, CellOp
 import torch
-from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.utils
 import torchvision.datasets as dset
 import utils
 
-parser = argparse.ArgumentParser("cifar")
-parser.add_argument("--data", type=str, default="../data", help="location of the data corpus")
-parser.add_argument("--batch_size", type=int, default=96, help="batch size")
-parser.add_argument("--learning_rate", type=float, default=0.025, help="init learning rate")
-parser.add_argument("--momentum", type=float, default=0.9, help="momentum")
-parser.add_argument("--weight_decay", type=float, default=3e-4, help="weight decay")
-parser.add_argument("--report_freq", type=float, default=50, help="report frequency")
-parser.add_argument("--gpu", type=int, default=0, help="gpu device id")
-parser.add_argument("--epochs", type=int, default=600, help="num of training epochs")
-parser.add_argument("--init_channels", type=int, default=36, help="num of init channels")
-parser.add_argument("--layers", type=int, default=20, help="total number of layers")
-parser.add_argument(
-    "--model_path", type=str, default="saved_models", help="path to save the model"
-)
-parser.add_argument("--auxiliary", action="store_true", default=False, help="use auxiliary tower")
-parser.add_argument(
-    "--auxiliary_weight", type=float, default=0.4, help="weight for auxiliary loss"
-)
-parser.add_argument("--cutout", action="store_true", default=False, help="use cutout")
-parser.add_argument("--cutout_length", type=int, default=16, help="cutout length")
-parser.add_argument("--drop_path_prob", type=float, default=0.2, help="drop path probability")
-parser.add_argument("--save", type=str, default="EXP", help="experiment name")
-parser.add_argument("--seed", type=int, default=0, help="random seed")
-parser.add_argument("--arch", type=str, default="DARTS", help="which architecture to use")
-parser.add_argument("--grad_clip", type=float, default=5, help="gradient clipping")
-parser.add_argument(
-    "--recursive_genotype", type=str, default=None, 
-    help="Name of the genotype to use as a primitive for recursive evaluation"
-)
-args = parser.parse_args()
 
-args.save = "eval-{}-{}".format(args.save, time.strftime("%Y%m%d-%H%M%S"))
-utils.create_exp_dir(args.save, scripts_to_save=glob.glob("*.py"))
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser("cifar")
+    parser.add_argument("--data", type=str, default="../data", help="location of the data corpus")
+    parser.add_argument("--batch_size", type=int, default=96, help="batch size")
+    parser.add_argument("--learning_rate", type=float, default=0.025, help="init learning rate")
+    parser.add_argument("--momentum", type=float, default=0.9, help="momentum")
+    parser.add_argument("--weight_decay", type=float, default=3e-4, help="weight decay")
+    parser.add_argument("--report_freq", type=float, default=50, help="report frequency")
+    parser.add_argument("--gpu", type=int, default=0, help="gpu device id")
+    parser.add_argument("--epochs", type=int, default=600, help="num of training epochs")
+    parser.add_argument("--init_channels", type=int, default=36, help="num of init channels")
+    parser.add_argument("--layers", type=int, default=20, help="total number of layers")
+    parser.add_argument(
+        "--model_path", type=str, default="saved_models", help="path to save the model"
+    )
+    parser.add_argument("--auxiliary", action="store_true", default=False, help="use auxiliary tower")
+    parser.add_argument(
+        "--auxiliary_weight", type=float, default=0.4, help="weight for auxiliary loss"
+    )
+    parser.add_argument("--cutout", action="store_true", default=False, help="use cutout")
+    parser.add_argument("--cutout_length", type=int, default=16, help="cutout length")
+    parser.add_argument("--drop_path_prob", type=float, default=0.2, help="drop path probability")
+    parser.add_argument("--save", type=str, default="EXP", help="experiment name")
+    parser.add_argument("--seed", type=int, default=0, help="random seed")
+    parser.add_argument("--arch", type=str, default="DARTS", help="which architecture to use")
+    parser.add_argument("--grad_clip", type=float, default=5, help="gradient clipping")
+    parser.add_argument(
+        "--recursive_genotypes", type=str, default=None,
+        help="Comma-separated list of genotypes to use as primitives for recursive evaluation"
+    )
+    return parser
 
-log_format = "%(asctime)s %(message)s"
-logging.basicConfig(
-    stream=sys.stdout, level=logging.INFO, format=log_format, datefmt="%m/%d %I:%M:%S %p"
-)
-fh = logging.FileHandler(os.path.join(args.save, "log.txt"))
-fh.setFormatter(logging.Formatter(log_format))
-logging.getLogger().addHandler(fh)
+
+def setup_logging(save_path: str) -> None:
+    log_format = "%(asctime)s %(message)s"
+    logging.basicConfig(
+        stream=sys.stdout, level=logging.INFO, format=log_format, datefmt="%m/%d %I:%M:%S %p"
+    )
+    fh = logging.FileHandler(os.path.join(save_path, "log.txt"))
+    fh.setFormatter(logging.Formatter(log_format))
+    logging.getLogger().addHandler(fh)
 
 CIFAR_CLASSES = 10
 
 
 def main():
+    global args  # allow access in helpers
+    parser = build_parser()
+    args = parser.parse_args()
+    args.save = "eval-{}-{}".format(args.save, time.strftime("%Y%m%d-%H%M%S"))
+    utils.create_exp_dir(args.save, scripts_to_save=glob.glob("*.py"))
+    setup_logging(args.save)
+
     if not torch.cuda.is_available():
-        logging.info("no gpu device available")
-        sys.exit(1)
+        logging.info("no gpu device available. Switching to CPU.")
+        device = torch.device("cpu")
+    else:
+        logging.info("gpu device = %d", args.gpu)
+        torch.cuda.set_device(args.gpu)
+        cudnn.benchmark = True
+        torch.cuda.manual_seed(args.seed)
+        cudnn.enabled = True
+        device = torch.device("cuda")
 
     np.random.seed(args.seed)
-    torch.cuda.set_device(args.gpu)
-    cudnn.benchmark = True
     torch.manual_seed(args.seed)
-    cudnn.enabled = True
-    torch.cuda.manual_seed(args.seed)
-    logging.info(f"gpu device = {args.gpu}")
     logging.info("args = %s", args)
 
     # --------------------------------------------------------------------------
     # R-DARTS Logic: Setup Ops
     # --------------------------------------------------------------------------
     current_ops = OPS
-    
-    if args.recursive_genotype:
-        logging.info(f"[R-DARTS Evaluation] Recursive mode enabled. Loading genotype: {args.recursive_genotype}")
+
+    if args.recursive_genotypes:
+        logging.info(f"[R-DARTS Evaluation] Recursive mode enabled. Loading genotypes: {args.recursive_genotypes}")
         try:
-            # Dynamically load the genotype from the genotypes module
-            loaded_genotype = getattr(genotypes_module, args.recursive_genotype)
-            
             # Create a copy of OPS
             current_ops = OPS.copy()
-            
-            # Register the new recursive primitive
-            # NOTE: For evaluation (NetworkCIFAR), the genotype string usually contains 
-            # primitive names. If the search found a cell using "darts_v1", 
-            # then "darts_v1" must exist in OPS.
-            
-            primitive_name = args.recursive_genotype.lower()
-            current_ops[primitive_name] = lambda C, stride, affine: CellOp(loaded_genotype, C, stride, affine)
-            
-            logging.info(f"[R-DARTS Evaluation] Added custom op '{primitive_name}' to registry.")
-            
-        except AttributeError:
-            logging.error(f"Genotype '{args.recursive_genotype}' not found in genotypes.py")
+
+            # Parse the comma-separated list of genotype names
+            genotype_names = [name.strip() for name in args.recursive_genotypes.split(',')]
+
+            for name in genotype_names:
+                if not name:
+                    continue
+
+                # Dynamically load the genotype from the genotypes module
+                loaded_genotype = getattr(genotypes_module, name)
+
+                # Register the new recursive primitive
+                # NOTE: For evaluation (NetworkCIFAR), the genotype string usually contains
+                # primitive names. If the search found a cell using "darts_v1",
+                # then "darts_v1" must exist in OPS.
+
+                primitive_key = name.lower()
+                current_ops[primitive_key] = lambda C, stride, affine, g=loaded_genotype: CellOp(g, C, stride, affine)
+
+                logging.info(f"[R-DARTS Evaluation] Added custom op '{primitive_key}' to registry.")
+
+        except AttributeError as e:
+            logging.error(f"Error loading genotypes: {e}")
             sys.exit(1)
 
     genotype = eval(f"genotypes.{args.arch}")
-    
+
     # Pass custom OPS to the network
     model = Network(args.init_channels, CIFAR_CLASSES, args.layers, args.auxiliary, genotype, ops=current_ops)
-    model = model.cuda()
+    model = model.to(device)
 
     logging.info("param size = %fMB", utils.count_parameters_in_MB(model))
 
     criterion = nn.CrossEntropyLoss()
-    criterion = criterion.cuda()
+    criterion = criterion.to(device)
     optimizer = torch.optim.SGD(
         model.parameters(),
         args.learning_rate,
@@ -142,25 +157,25 @@ def main():
         logging.info("epoch %d lr %e", epoch, scheduler.get_last_lr()[0])
         model.drop_path_prob = args.drop_path_prob * epoch / args.epochs
 
-        train_acc, train_obj = train(train_queue, model, criterion, optimizer)
+        train_acc, train_obj = train(train_queue, model, criterion, optimizer, device)
         scheduler.step()
         logging.info("train_acc %f", train_acc)
 
-        valid_acc, valid_obj = infer(valid_queue, model, criterion)
+        valid_acc, valid_obj = infer(valid_queue, model, criterion, device)
         logging.info("valid_acc %f", valid_acc)
 
         utils.save(model, os.path.join(args.save, "weights.pt"))
 
 
-def train(train_queue, model, criterion, optimizer):
+def train(train_queue, model, criterion, optimizer, device):
     objs = utils.AvgrageMeter()
     top1 = utils.AvgrageMeter()
     top5 = utils.AvgrageMeter()
     model.train()
 
     for step, (input, target) in enumerate(train_queue):
-        input = Variable(input).cuda()
-        target = Variable(target).cuda(non_blocking=True)
+        input = input.to(device)
+        target = target.to(device, non_blocking=True)
 
         optimizer.zero_grad()
         logits, logits_aux = model(input)
@@ -174,9 +189,9 @@ def train(train_queue, model, criterion, optimizer):
 
         prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
         n = input.size(0)
-        objs.update(loss.data, n)
-        top1.update(prec1.data, n)
-        top5.update(prec5.data, n)
+        objs.update(loss.item(), n)
+        top1.update(prec1.item(), n)
+        top5.update(prec5.item(), n)
 
         if step % args.report_freq == 0:
             logging.info("train %03d %e %f %f", step, objs.avg, top1.avg, top5.avg)
@@ -184,27 +199,28 @@ def train(train_queue, model, criterion, optimizer):
     return top1.avg, objs.avg
 
 
-def infer(valid_queue, model, criterion):
+def infer(valid_queue, model, criterion, device):
     objs = utils.AvgrageMeter()
     top1 = utils.AvgrageMeter()
     top5 = utils.AvgrageMeter()
     model.eval()
 
-    for step, (input, target) in enumerate(valid_queue):
-        input = Variable(input, volatile=True).cuda()
-        target = Variable(target, volatile=True).cuda(non_blocking=True)
+    with torch.no_grad():
+        for step, (input, target) in enumerate(valid_queue):
+            input = input.to(device)
+            target = target.to(device, non_blocking=True)
 
-        logits, _ = model(input)
-        loss = criterion(logits, target)
+            logits, _ = model(input)
+            loss = criterion(logits, target)
 
-        prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
-        n = input.size(0)
-        objs.update(loss.data, n)
-        top1.update(prec1.data, n)
-        top5.update(prec5.data, n)
+            prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
+            n = input.size(0)
+            objs.update(loss.item(), n)
+            top1.update(prec1.item(), n)
+            top5.update(prec5.item(), n)
 
-        if step % args.report_freq == 0:
-            logging.info("valid %03d %e %f %f", step, objs.avg, top1.avg, top5.avg)
+            if step % args.report_freq == 0:
+                logging.info("valid %03d %e %f %f", step, objs.avg, top1.avg, top5.avg)
 
     return top1.avg, objs.avg
 

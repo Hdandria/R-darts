@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from genotypes import STEPS
 import torch
 import torch.nn as nn
@@ -5,6 +7,10 @@ import torch.nn.functional as F
 from utils import LockedDropout, embedded_dropout, mask2d
 
 INITRANGE = 0.04
+
+
+def identity(x: torch.Tensor) -> torch.Tensor:
+    return x
 
 
 class DARTSCell(nn.Module):
@@ -55,15 +61,15 @@ class DARTSCell(nn.Module):
         s0 = h_prev + c0 * (h0 - h_prev)
         return s0
 
-    def _get_activation(self, name):
+    def _get_activation(self, name: str) -> Callable[[torch.Tensor], torch.Tensor]:
         if name == "tanh":
             f = torch.tanh
         elif name == "relu":
             f = F.relu
         elif name == "sigmoid":
-            f = F.sigmoid
+            f = torch.sigmoid
         elif name == "identity":
-            f = nn.Identity()
+            f = identity
         else:
             raise NotImplementedError
         return f
@@ -137,8 +143,9 @@ class RNNModel(nn.Module):
         self.decoder.bias.data.fill_(0)
         self.decoder.weight.data.uniform_(-INITRANGE, INITRANGE)
 
-    def forward(self, input, hidden, return_h=False):
-        hidden = [hidden]
+    def forward(self, input: torch.Tensor, hidden: torch.Tensor | list[torch.Tensor], return_h: bool=False) -> tuple:
+        if not isinstance(hidden, list):
+            hidden = [hidden]
         batch_size = input.size(1)
 
         emb = embedded_dropout(self.encoder, input, dropout=self.dropoute if self.training else 0)
@@ -163,8 +170,8 @@ class RNNModel(nn.Module):
         model_output = model_output.view(-1, batch_size, self.ntoken)
 
         if return_h:
-            return model_output, hidden[0], raw_outputs, outputs
-        return model_output, hidden[0]
+            return model_output, hidden, raw_outputs, outputs
+        return model_output, hidden
 
     def init_hidden(self, bsz):
         weight = next(self.parameters()).data

@@ -1,7 +1,7 @@
 # R-DARTS: Recursive Differentiable Architecture Search
 
 > **Status:** Proof of Concept / Experimental  
-> **Original Concept:** Based on [DARTS: Differentiable Architecture Search](https://arxiv.org/abs/1806.09055) (Liu et al., 2018)
+> **Full Report:** [Read the Master's Thesis (PDF)](./report.pdf) > **Original Concept:** Based on [DARTS: Differentiable Architecture Search](https://arxiv.org/abs/1806.09055) (Liu et al., 2018)
 
 ## The Concept
 
@@ -16,12 +16,31 @@ In standard DARTS, the algorithm searches for a cell structure using a fixed set
 1.  **Level 0 (Standard):** Search for a `Genotype_L0` using atomic primitives (Conv, Pool, Skip).
     - _Command:_ `uv run cnn/train_search.py`
 2.  **Abstraction:** Wrap `Genotype_L0` into a `CellOp` — a black-box operation that behaves like a standard PyTorch module but contains the complex topology learned in step 1.
-3.  **Level 1 (Recursive):** Launch a new search where the set of primitives is:
-    $$ \mathcal{O}_{L2} = \{ \text{Conv}, \text{Pool} \} \cup \{ \text{Genotype}_{L0} \} $$
-    - _Command:_ `uv run cnn/train_search.py --recursive_genotype Genotype_L0`
+3.  **Level 1 (Recursive):** Launch a new search where the set of primitives is composed of the top-k learned cells (and 'none'):
+    $$ \mathcal{O}_{L2} = \{ \text{none}, G_{0}^1, \dots, G\_{0}^k \} $$
+    - _Command:_ `uv run cnn/train_search.py --recursive_genotypes "Genotype_L0_v1,Genotype_L0_v2"`
 4.  **Result:** A hyper-cell composed of standard operations and nested sub-cells.
 
 This approach mimics biological evolution, where simple cells combine to form tissues, and tissues combine to form organs. By ensuring optimality at the local level (micro-structure) first, R-DARTS accelerates the global search (macro-structure) by assembling pre-optimized components rather than learning from scratch.
+
+## Contributions
+
+Compared to the original DARTS implementation (2018), this repository introduces:
+
+1.  **Recursive Search Engine:**
+
+    - Implementation of `CellOp` (`cnn/operations.py`), allowing any learned graph to be wrapped as a differentiable primitive.
+    - Dynamic injection of primitives in `model_search.py` and `train_search.py`, enabling the search space to evolve at runtime.
+
+2.  **Modernized PyTorch Stack:**
+
+    - Migration from legacy PyTorch 0.3 to modern **PyTorch 2.x**.
+    - Replacement of deprecated `Variable(volatile=True)` with `torch.no_grad()`.
+    - Full type hinting (compliant with `pyright`).
+
+3.  **Reproducibility:**
+    - Dependency management via **`uv`** (replacing fragile requirements files).
+    - Unified workflow for searching and retraining recursive architectures.
 
 ---
 
@@ -57,10 +76,13 @@ _(Currently, this uses the standard DARTS primitives)_
 uv run cnn/train_search.py --batch_size 64
 ```
 
-**⚠️ IMPORTANT STEP:**
-The script will log the found architecture at the end of the training (look for `genotype = Genotype(...)` in the logs).
+**⚠️ IMPORTANT STEP (where to read results):**
 
-**You must manually copy this Genotype output and paste it into `cnn/genotypes.py`**, assigning it to a variable name (e.g., `MY_LEVEL0_CELL`).
+- The script writes logs in `search-*/log.txt`.
+- `Best (argmax) Genotype: ...` → deterministic genotype to train/evaluate.
+- `Sampled Genotype N: ...` → sampled variants to use as primitives for recursion.
+
+**Copy the chosen genotype(s) into `cnn/genotypes.py`**, giving them names (e.g., `MY_LEVEL0_CELL` for the argmax, `MY_LEVEL0_CELL_V1`, `MY_LEVEL0_CELL_V2` for sampled variants).
 
 Example in `cnn/genotypes.py`:
 
@@ -75,13 +97,14 @@ MY_LEVEL0_CELL = Genotype(
 
 ### 2. Recursive Search (Level 1)
 
-Now, launch a new search using your previously learned cell as a building block. The script will look up the variable name you created in `cnn/genotypes.py`.
+Now, launch a new search using your previously learned cells as building blocks. The script will look up the variable names you created in `cnn/genotypes.py`. You can provide multiple genotypes (comma-separated) to enrich the search space.
 
 ```bash
 # Run from project root
 uv run cnn/train_search.py \
     --batch_size 16 \
-    --recursive_genotype MY_LEVEL0_CELL
+    --recursive_genotypes "MY_LEVEL0_CELL_V1,MY_LEVEL0_CELL_V2" \
+    --save search-l1
 ```
 
 **Note:** Recursive cells are more memory-intensive, so reducing the `batch_size` (e.g. to 16 or 32) is recommended.
@@ -96,10 +119,10 @@ uv run cnn/train.py \
     --auxiliary \
     --cutout \
     --arch MY_LEVEL1_CELL \
-    --recursive_genotype MY_LEVEL0_CELL
+    --recursive_genotypes "MY_LEVEL0_CELL_V1,MY_LEVEL0_CELL_V2"
 ```
 
-_Note: If your `MY_LEVEL1_CELL` uses `MY_LEVEL0_CELL` as a primitive, you MUST pass `--recursive_genotype MY_LEVEL0_CELL` so the evaluation script knows how to build the graph._
+_Note: If your `MY_LEVEL1_CELL` uses `MY_LEVEL0_CELL_V1` and `MY_LEVEL0_CELL_V2` as primitives, you MUST pass them to `--recursive_genotypes` so the evaluation script knows how to build the graph._
 
 ---
 

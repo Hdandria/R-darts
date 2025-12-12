@@ -1,6 +1,8 @@
+from collections.abc import Callable
+from typing import Any
+
 import torch
 import torch.nn as nn
-from typing import List, Dict, Callable, Any, Tuple, Optional
 
 # Forward declaration or imports if needed
 # from .genotypes import Genotype # Avoid circular import if genotypes imports operations
@@ -121,7 +123,7 @@ class FactorizedReduce(nn.Module):
         return out
 
 
-OPS: Dict[str, Callable[[int, int, bool], nn.Module]] = {
+OPS: dict[str, Callable[[int, int, bool], nn.Module]] = {
     "none": lambda C, stride, affine: Zero(stride),
     "avg_pool_3x3": lambda C, stride, affine: nn.AvgPool2d(
         3, stride=stride, padding=1, count_include_pad=False
@@ -148,7 +150,7 @@ class CellOp(nn.Module):
         super().__init__()
         self.stride = stride
         # Logic adapted from model.Cell but simplified for an operation context
-        
+
         if stride == 2:
             op_names, indices = zip(*genotype.reduce, strict=True)
             concat = genotype.reduce_concat
@@ -157,14 +159,22 @@ class CellOp(nn.Module):
             op_names, indices = zip(*genotype.normal, strict=True)
             concat = genotype.normal_concat
             reduction = False
-            
+
         self._compile(C, list(op_names), list(indices), concat, reduction, affine)
 
-    def _compile(self, C: int, op_names: List[str], indices: List[int], concat: List[int], reduction: bool, affine: bool):
+    def _compile(
+        self,
+        C: int,
+        op_names: list[str],
+        indices: list[int],
+        concat: list[int],
+        reduction: bool,
+        affine: bool,
+    ):
         self._steps = len(op_names) // 2
         self._concat = concat
         self.multiplier = len(concat)
-        
+
         self._ops = nn.ModuleList()
         for name, index in zip(op_names, indices, strict=True):
             # Internal stride logic of DARTS cell:
@@ -173,14 +183,15 @@ class CellOp(nn.Module):
             op = OPS[name](C, inp_stride, affine)
             self._ops.append(op)
         self._indices = indices
-        
+
         # Final projection to ensure output channels = C
         # A standard DARTS cell outputs (multiplier * C) channels.
-        # But a primitive operation is expected to output C (or C * stride_factor? No, usually C_out=C_in for stride 1 ops in DARTS search space, except factorized reduce)
+        # But a primitive operation is expected to output C (or C * stride_factor?
+        # No, usually C_out=C_in for stride 1 ops in DARTS search space, except factorized reduce)
         # FactorizedReduce changes spatial dim but keeps C_out = C_in (in argument logic).
         # Wait, OPS signatures are (C, stride, affine). C is input channels.
         # Usually these ops output C channels as well (SepConv(C, C...)).
-        
+
         self.project_out = nn.Sequential(
             nn.ReLU(inplace=False),
             nn.Conv2d(C * self.multiplier, C, 1, stride=1, padding=0, bias=False),

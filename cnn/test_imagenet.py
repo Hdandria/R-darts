@@ -104,9 +104,9 @@ def infer(valid_queue, model, criterion):
 
         prec1, prec5 = utils.accuracy(logits, target_var, topk=(1, 5))
         n = input.size(0)
-        objs.update(loss.data[0], n)
-        top1.update(prec1.data[0], n)
-        top5.update(prec5.data[0], n)
+        objs.update(loss.item(), n)
+        top1.update(prec1.item(), n)
+        top5.update(prec5.item(), n)
 
         if i % args.report_freq == 0:
             logging.info("valid %03d %e %f %f", i, objs.avg, top1.avg, top5.avg)
