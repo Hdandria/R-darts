@@ -1,0 +1,20 @@
+{
+    "include": [
+        "cnn",
+        "rnn",
+    ],
+    "exclude": [
+        ".venv",
+        ".ruff_cache",
+        ".pytest_cache",
+        "**/__pycache__",
+        "**/*.pyc",
+    ],
+    "reportMissingImports": true,
+    "reportMissingModuleSource": true,
+    "pythonVersion": "3.12",
+    "pythonPlatform": "All",
+    "venvPath": ".",
+    "venv": ".venv",
+    "typeCheckingMode": "basic"
+}
