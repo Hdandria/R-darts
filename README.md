@@ -1,7 +1,8 @@
 # R-DARTS: Recursive Differentiable Architecture Search
 
 > **Status:** Proof of Concept / Experimental  
-> **Full Report:** [Read the Master's Thesis (PDF)](./report.pdf) > **Original Concept:** Based on [DARTS: Differentiable Architecture Search](https://arxiv.org/abs/1806.09055) (Liu et al., 2018)
+> **Full Report:** [Read the Master's Thesis (PDF)](./report.pdf)  
+> **Original Concept:** Based on [DARTS: Differentiable Architecture Search](https://arxiv.org/abs/1806.09055) (Liu et al., 2018)
 
 ## The Concept
 
@@ -36,7 +37,6 @@ Compared to the original DARTS implementation (2018), this repository introduces
 
     - Migration from legacy PyTorch 0.3 to modern **PyTorch 2.x**.
     - Replacement of deprecated `Variable(volatile=True)` with `torch.no_grad()`.
-    - Full type hinting (compliant with `pyright`).
 
 3.  **Reproducibility:**
     - Dependency management via **`uv`** (replacing fragile requirements files).
