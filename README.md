@@ -1,169 +1,127 @@
-# Differentiable Architecture Search
+# R-DARTS: Recursive Differentiable Architecture Search
 
-Code accompanying the paper
+> **Status:** Proof of Concept / Experimental  
+> **Original Concept:** Based on [DARTS: Differentiable Architecture Search](https://arxiv.org/abs/1806.09055) (Liu et al., 2018)
 
-> [DARTS: Differentiable Architecture Search](https://arxiv.org/abs/1806.09055)\
-> Hanxiao Liu, Karen Simonyan, Yiming Yang.\
-> _arXiv:1806.09055_.
+## The Concept
 
-<p align="center">
-  <img src="img/darts.png" alt="darts" width="48%">
-</p>
-The algorithm is based on continuous relaxation and gradient descent in the architecture space. It is able to efficiently design high-performance convolutional architectures for image classification (on CIFAR-10 and ImageNet) and recurrent architectures for language modeling (on Penn Treebank and WikiText-2). Only a single GPU is required.
+**R-DARTS** extends the original DARTS formulation by introducing the concept of **Recursive Search Spaces**.
 
-## Requirements
+In standard DARTS, the algorithm searches for a cell structure using a fixed set of primitive operations (Convolution 3x3, MaxPool, etc.). Once found, this cell is stacked to form the final network.
 
-```
-Python >= 3.5.5, PyTorch == 0.3.1, torchvision == 0.2.0
-```
+**R-DARTS asks: What if the "learned cell" became a "primitive operation" for a subsequent search?**
 
-NOTE: PyTorch 0.4 is not supported at this moment and would lead to OOM.
+### The Recursive Loop
 
-## Datasets
+1.  **Level 0 (Standard):** Search for a `Genotype_L0` using atomic primitives (Conv, Pool, Skip).
+    - _Command:_ `uv run cnn/train_search.py`
+2.  **Abstraction:** Wrap `Genotype_L0` into a `CellOp` — a black-box operation that behaves like a standard PyTorch module but contains the complex topology learned in step 1.
+3.  **Level 1 (Recursive):** Launch a new search where the set of primitives is:
+    $$ \mathcal{O}_{L2} = \{ \text{Conv}, \text{Pool} \} \cup \{ \text{Genotype}_{L0} \} $$
+    - _Command:_ `uv run cnn/train_search.py --recursive_genotype Genotype_L0`
+4.  **Result:** A hyper-cell composed of standard operations and nested sub-cells.
 
-Instructions for acquiring PTB and WT2 can be found [here](https://github.com/salesforce/awd-lstm-lm). While CIFAR-10 can be automatically downloaded by torchvision, ImageNet needs to be manually downloaded (preferably to a SSD) following the instructions [here](https://github.com/pytorch/examples/tree/master/imagenet).
+This approach mimics biological evolution, where simple cells combine to form tissues, and tissues combine to form organs. By ensuring optimality at the local level (micro-structure) first, R-DARTS accelerates the global search (macro-structure) by assembling pre-optimized components rather than learning from scratch.
 
-## Pretrained models
+---
 
-The easist way to get started is to evaluate our pretrained DARTS models.
+## Implementation Details
 
-**CIFAR-10** ([cifar10_model.pt](https://drive.google.com/file/d/1Y13i4zKGKgjtWBdC0HWLavjO7wvEiGOc/view?usp=sharing))
+This repository contains a functional implementation of the **Recursive Graph Construction**.
 
-```
-cd cnn && python test.py --auxiliary --model_path cifar10_model.pt
-```
+### Scope of Modernization (CNN Only)
 
-- Expected result: 2.63% test error rate with 3.3M model params.
+**Important:** Only the **CNN (Convolutional Neural Network)** portion of the original DARTS codebase (`cnn/` folder) has been modernized and adapted for R-DARTS. The `rnn/` (Recurrent Neural Network) folder remains in its legacy state (PyTorch 0.3 era) and has **not** been updated or tested.
 
-**PTB** ([ptb_model.pt](https://drive.google.com/file/d/1Mt_o6fZOlG-VDF3Q5ModgnAJ9W6f_av2/view?usp=sharing))
+### Key Components
 
-```
-cd rnn && python test.py --model_path ptb_model.pt
-```
+- **`cnn/operations.py` -> `CellOp`**: An adapter class that converts a static `Genotype` (a list of connections) into a differentiable `nn.Module` compatible with the DARTS search engine. It handles stride adaptation and channel projection automatically.
+- **`cnn/model_search.py`**: Refactored to accept dynamic `primitives` and `ops` dictionaries, breaking the hard-coded dependency on the original 8 primitives.
+- **`cnn/train_search.py`**: The main training script, upgraded to support dynamic injection of recursive primitives via command line arguments.
 
-- Expected result: 55.68 test perplexity with 23M model params.
+## Usage
 
-**ImageNet** ([imagenet_model.pt](https://drive.google.com/file/d/1AKr6Y_PoYj7j0Upggyzc26W0RVdg4CVX/view?usp=sharing))
-
-```
-cd cnn && python test_imagenet.py --auxiliary --model_path imagenet_model.pt
-```
-
-- Expected result: 26.7% top-1 error and 8.7% top-5 error with 4.7M model params.
-
-## Architecture search (using small proxy models)
-
-To carry out architecture search using 2nd-order approximation, run
-
-```
-cd cnn && python train_search.py --unrolled     # for conv cells on CIFAR-10
-cd rnn && python train_search.py --unrolled     # for recurrent cells on PTB
-```
-
-Note the _validation performance in this step does not indicate the final performance of the architecture_. One must train the obtained genotype/architecture from scratch using full-sized models, as described in the next section.
-
-Also be aware that different runs would end up with different local minimum. To get the best result, it is crucial to repeat the search process with different seeds and select the best cell(s) based on validation performance (obtained by training the derived cell from scratch for a small number of epochs). Please refer to fig. 3 and sect. 3.2 in our arXiv paper.
-
-<p align="center">
-<img src="img/progress_convolutional_normal.gif" alt="progress_convolutional_normal" width="29%">
-<img src="img/progress_convolutional_reduce.gif" alt="progress_convolutional_reduce" width="35%">
-<img src="img/progress_recurrent.gif" alt="progress_recurrent" width="33%">
-</p>
-<p align="center">
-Figure: Snapshots of the most likely normal conv, reduction conv, and recurrent cells over time.
-</p>
-
-## Architecture evaluation (using full-sized models)
-
-To evaluate our best cells by training from scratch, run
-
-```
-cd cnn && python train.py --auxiliary --cutout            # CIFAR-10
-cd rnn && python train.py                                 # PTB
-cd rnn && python train.py --data ../data/wikitext-2 \     # WT2
-            --dropouth 0.15 --emsize 700 --nhidlast 700 --nhid 700 --wdecay 5e-7
-cd cnn && python train_imagenet.py --auxiliary            # ImageNet
-```
-
-Customized architectures are supported through the `--arch` flag once specified in `genotypes.py`.
-
-The CIFAR-10 result at the end of training is subject to variance due to the non-determinism of cuDNN back-prop kernels. _It would be misleading to report the result of only a single run_. By training our best cell from scratch, one should expect the average test error of 10 independent runs to fall in the range of 2.76 +/- 0.09% with high probability.
-
-<p align="center">
-<img src="img/cifar10.png" alt="cifar10" width="36%">
-<img src="img/imagenet.png" alt="ptb" width="29%">
-<img src="img/ptb.png" alt="ptb" width="30%">
-</p>
-<p align="center">
-Figure: Expected learning curves on CIFAR-10 (4 runs), ImageNet and PTB.
-</p>
-
-## Visualization
-
-Package [graphviz](https://graphviz.readthedocs.io/en/stable/index.html) is required to visualize the learned cells
-
-```
-python visualize.py DARTS
-```
-
-where `DARTS` can be replaced by any customized architectures in `genotypes.py`.
-
-## Citation
-
-If you use any part of this code in your research, please cite our [paper](https://arxiv.org/abs/1806.09055):
-
-```
-@article{liu2018darts,
-  title={DARTS: Differentiable Architecture Search},
-  author={Liu, Hanxiao and Simonyan, Karen and Yang, Yiming},
-  journal={arXiv preprint arXiv:1806.09055},
-  year={2018}
-}
-```
-
-## Comment l'utiliser
-
-### 1. Mise en place de l'environnement
-
-Ce projet utilise `uv` pour la gestion des dépendances et de l'environnement virtuel.
+### Prerequisites
 
 ```bash
-# Créer l'environnement virtuel
-uv venv
-
-# Activer l'environnement (Windows)
-.venv\Scripts\activate
-
-# Installer les dépendances
 uv sync
 ```
 
-### 2. Qualité du code
+### 1. Classical DARTS Search (Level 0)
 
-Le projet est configuré avec `ruff` pour le formatage/linting et `pyright` pour l'analyse de types.
+First, run a standard architecture search to discover the base building blocks.
+_(Currently, this uses the standard DARTS primitives)_
 
 ```bash
-# Formater tout le code
-uv run ruff format .
-
-# Vérifier le code (formatage, erreurs, types)
-uv run ruff check . --fix
-uv run pyright
+# Run from project root
+uv run cnn/train_search.py --batch_size 64
 ```
 
-### 3. Lancer une recherche d'architecture
+**⚠️ IMPORTANT STEP:**
+The script will log the found architecture at the end of the training (look for `genotype = Genotype(...)` in the logs).
 
-```bash
-cd cnn && python train_search.py --unrolled     # for conv cells on CIFAR-10
-cd rnn && python train_search.py --unrolled     # for recurrent cells on PTB
+**You must manually copy this Genotype output and paste it into `cnn/genotypes.py`**, assigning it to a variable name (e.g., `MY_LEVEL0_CELL`).
+
+Example in `cnn/genotypes.py`:
+
+```python
+MY_LEVEL0_CELL = Genotype(
+    normal=[('sep_conv_3x3', 1), ...],
+    normal_concat=[...],
+    reduce=[...],
+    reduce_concat=[...]
+)
 ```
 
-### 4. Entraîner une architecture trouvée (par exemple, DARTS_V2)
+### 2. Recursive Search (Level 1)
+
+Now, launch a new search using your previously learned cell as a building block. The script will look up the variable name you created in `cnn/genotypes.py`.
 
 ```bash
-cd cnn && python train.py --auxiliary --cutout            # CIFAR-10
-cd rnn && python train.py                                 # PTB
-cd rnn && python train.py --data ../data/wikitext-2 \     # WT2
-            --dropouth 0.15 --emsize 700 --nhidlast 700 --nhid 700 --wdecay 5e-7
-cd cnn && python train_imagenet.py --auxiliary            # ImageNet
+# Run from project root
+uv run cnn/train_search.py \
+    --batch_size 16 \
+    --recursive_genotype MY_LEVEL0_CELL
+```
+
+**Note:** Recursive cells are more memory-intensive, so reducing the `batch_size` (e.g. to 16 or 32) is recommended.
+
+### 3. Final Evaluation (Training from Scratch)
+
+Once you have found a recursive architecture (let's call it `MY_LEVEL1_CELL`), copy it into `cnn/genotypes.py`. You can now train it fully for 600 epochs to measure its true performance.
+
+```bash
+# Run from project root
+uv run cnn/train.py \
+    --auxiliary \
+    --cutout \
+    --arch MY_LEVEL1_CELL \
+    --recursive_genotype MY_LEVEL0_CELL
+```
+
+_Note: If your `MY_LEVEL1_CELL` uses `MY_LEVEL0_CELL` as a primitive, you MUST pass `--recursive_genotype MY_LEVEL0_CELL` so the evaluation script knows how to build the graph._
+
+---
+
+## Historical Context & Acknowledgments
+
+This project was originally developed as a **Master's Thesis (2022)**. It explores hierarchical Neural Architecture Search (NAS) by treating learned architectures as reusable primitives.
+
+It has been recently **modernized** (Dec 2025) to run on contemporary PyTorch versions and modern Python environments (using `uv`). While the core recursive logic has been reimplemented and verified as functional, the codebase is provided "as is" to spark discussion on hierarchical NAS.
+
+### Supervision
+
+Special thanks to [Enzo Tartaglione](https://enzotarta.github.io/) (Telecom Paris) for his supervision and guidance during the original development of this thesis.
+
+## Reference
+
+This code is a fork of the official [DARTS implementation](https://github.com/quark0/darts).
+
+```bibtex
+@inproceedings{liu2018darts,
+  title={DARTS: Differentiable Architecture Search},
+  author={Hanxiao Liu and Karen Simonyan and Yiming Yang},
+  booktitle={ICLR},
+  year={2019}
+}
 ```

@@ -3,29 +3,48 @@ import torch
 from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import List, Dict, Callable, Any, Tuple, Optional
 
-from .genotypes import PRIMITIVES, Genotype
-from .operations import OPS, FactorizedReduce, ReLUConvBN
+from .genotypes import Genotype
+from .operations import FactorizedReduce, ReLUConvBN, OPS as DEFAULT_OPS
+from .genotypes import PRIMITIVES as DEFAULT_PRIMITIVES
 
 
 class MixedOp(nn.Module):
-    def __init__(self, C, stride, primitive=PRIMITIVES, op_list=OPS):
+    def __init__(
+        self,
+        C: int,
+        stride: int,
+        primitive: List[str] = DEFAULT_PRIMITIVES,
+        op_list: Dict[str, Callable] = DEFAULT_OPS,
+    ):
         super().__init__()
         self._ops = nn.ModuleList()
         self.primitive = primitive
-        self.op_list = OPS
-        for primitive in self.primitive:
-            op = op_list[primitive](C, stride, False)
-            if "pool" in primitive:
+        self.op_list = op_list
+        for primitive_name in self.primitive:
+            op = op_list[primitive_name](C, stride, False)
+            if "pool" in primitive_name:
                 op = nn.Sequential(op, nn.BatchNorm2d(C, affine=False))
             self._ops.append(op)
 
-    def forward(self, x, weights):
-        return sum(w * op(x) for w, op in zip(weights, self._ops, strict=True))
+    def forward(self, x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+        return sum(w * op(x) for w, op in zip(weights, self._ops, strict=True)) # type: ignore
 
 
 class Cell(nn.Module):
-    def __init__(self, steps, multiplier, C_prev_prev, C_prev, C, reduction, reduction_prev):
+    def __init__(
+        self,
+        steps: int,
+        multiplier: int,
+        C_prev_prev: int,
+        C_prev: int,
+        C: int,
+        reduction: bool,
+        reduction_prev: bool,
+        primitives: List[str] = DEFAULT_PRIMITIVES,
+        ops: Dict[str, Callable] = DEFAULT_OPS,
+    ):
         super().__init__()
         self.reduction = reduction
 
@@ -42,26 +61,37 @@ class Cell(nn.Module):
         for i in range(self._steps):
             for j in range(2 + i):
                 stride = 2 if reduction and j < 2 else 1
-                op = MixedOp(C, stride, PRIMITIVES, OPS)
+                op = MixedOp(C, stride, primitives, ops)
                 self._ops.append(op)
 
-    def forward(self, s0, s1, weights):
+    def forward(self, s0: torch.Tensor, s1: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
         s0 = self.preprocess0(s0)
         s1 = self.preprocess1(s1)
 
         states = [s0, s1]
         offset = 0
         for _i in range(self._steps):
-            s = sum(self._ops[offset + j](h, weights[offset + j]) for j, h in enumerate(states))
+            s = sum(
+                self._ops[offset + j](h, weights[offset + j]) for j, h in enumerate(states)
+            )
             offset += len(states)
-            states.append(s)
+            states.append(s) # type: ignore
 
         return torch.cat(states[-self._multiplier :], dim=1)
 
 
 class Network(nn.Module):
     def __init__(
-        self, C, num_classes, layers, criterion, steps=4, multiplier=4, stem_multiplier=3
+        self,
+        C: int,
+        num_classes: int,
+        layers: int,
+        criterion: nn.Module,
+        steps: int = 4,
+        multiplier: int = 4,
+        stem_multiplier: int = 3,
+        primitives: List[str] = DEFAULT_PRIMITIVES,
+        ops: Dict[str, Callable] = DEFAULT_OPS,
     ):
         super().__init__()
         self._C = C
@@ -70,6 +100,8 @@ class Network(nn.Module):
         self._criterion = criterion
         self._steps = steps
         self._multiplier = multiplier
+        self.primitives = primitives
+        self.ops = ops
 
         C_curr = stem_multiplier * C
         self.stem = nn.Sequential(
@@ -85,7 +117,17 @@ class Network(nn.Module):
                 reduction = True
             else:
                 reduction = False
-            cell = Cell(steps, multiplier, C_prev_prev, C_prev, C_curr, reduction, reduction_prev)
+            cell = Cell(
+                steps,
+                multiplier,
+                C_prev_prev,
+                C_prev,
+                C_curr,
+                reduction,
+                reduction_prev,
+                primitives,
+                ops,
+            )
             reduction_prev = reduction
             self.cells += [cell]
             C_prev_prev, C_prev = C_prev, multiplier * C_curr
@@ -95,13 +137,25 @@ class Network(nn.Module):
 
         self._initialize_alphas()
 
-    def new(self):
-        model_new = Network(self._C, self._num_classes, self._layers, self._criterion).cuda()
+    def new(self) -> "Network":
+        model_new = Network(
+            self._C,
+            self._num_classes,
+            self._layers,
+            self._criterion,
+            self._steps,
+            self._multiplier,
+            primitives=self.primitives,
+            ops=self.ops,
+        )
+        if torch.cuda.is_available():
+            model_new = model_new.cuda()
+            
         for x, y in zip(model_new.arch_parameters(), self.arch_parameters(), strict=True):
             x.data.copy_(y.data)
         return model_new
 
-    def forward(self, input):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         s0 = s1 = self.stem(input)
         for _i, cell in enumerate(self.cells):
             if cell.reduction:
@@ -113,26 +167,30 @@ class Network(nn.Module):
         logits = self.classifier(out.view(out.size(0), -1))
         return logits
 
-    def _loss(self, input, target):
+    def _loss(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         logits = self(input)
         return self._criterion(logits, target)
 
-    def _initialize_alphas(self):
+    def _initialize_alphas(self) -> None:
         k = sum(1 for i in range(self._steps) for n in range(2 + i))
-        num_ops = len(PRIMITIVES)
+        num_ops = len(self.primitives)
 
-        self.alphas_normal = Variable(1e-3 * torch.randn(k, num_ops).cuda(), requires_grad=True)
-        self.alphas_reduce = Variable(1e-3 * torch.randn(k, num_ops).cuda(), requires_grad=True)
+        self.alphas_normal = Variable(1e-3 * torch.randn(k, num_ops), requires_grad=True)
+        self.alphas_reduce = Variable(1e-3 * torch.randn(k, num_ops), requires_grad=True)
+        if torch.cuda.is_available():
+            self.alphas_normal = self.alphas_normal.cuda()
+            self.alphas_reduce = self.alphas_reduce.cuda()
+            
         self._arch_parameters = [
             self.alphas_normal,
             self.alphas_reduce,
         ]
 
-    def arch_parameters(self):
+    def arch_parameters(self) -> List[torch.Tensor]:
         return self._arch_parameters
 
-    def genotype(self):
-        def _parse(weights):
+    def genotype(self) -> Genotype:
+        def _parse(weights: np.ndarray) -> List[Tuple[str, int]]:
             gene = []
             n = 2
             start = 0
@@ -142,17 +200,19 @@ class Network(nn.Module):
                 edges = sorted(
                     range(i + 2),
                     key=lambda x: -max(
-                        W[x][k] for k in range(len(W[x])) if k != PRIMITIVES.index("none")
+                        W[x][k]
+                        for k in range(len(W[x]))
+                        if k != self.primitives.index("none")
                     ),
                 )[:2]
                 for j in edges:
                     k_best = None
                     for k in range(len(W[j])):
-                        if k != PRIMITIVES.index("none"):
+                        if k != self.primitives.index("none"):
                             if k_best is None or W[j][k] > W[j][k_best]:
                                 k_best = k
                     assert k_best is not None
-                    gene.append((PRIMITIVES[k_best], j))
+                    gene.append((self.primitives[k_best], j))
                 start = end
                 n += 1
             return gene
@@ -162,12 +222,15 @@ class Network(nn.Module):
 
         concat = range(2 + self._steps - self._multiplier, self._steps + 2)
         genotype = Genotype(
-            normal=gene_normal, normal_concat=concat, reduce=gene_reduce, reduce_concat=concat
+            normal=gene_normal,
+            normal_concat=concat,
+            reduce=gene_reduce,
+            reduce_concat=concat,
         )
         return genotype
 
-    def genotype_random(self):
-        def _parse_random(weights):
+    def genotype_random(self) -> Genotype:
+        def _parse_random(weights: np.ndarray) -> List[Tuple[str, int]]:
             gene = []
             n = 2
             start = 0
@@ -179,7 +242,7 @@ class Network(nn.Module):
                     k_best = 0
                     while k_best == 0:
                         k_best = np.random.choice(range(len(W[edge])), p=W[edge])
-                    gene.append((PRIMITIVES[k_best], edge))
+                    gene.append((self.primitives[k_best], edge))
                 start = end
                 n += 1
             return gene
@@ -189,6 +252,9 @@ class Network(nn.Module):
 
         concat = range(2 + self._steps - self._multiplier, self._steps + 2)
         genotype = Genotype(
-            normal=gene_normal, normal_concat=concat, reduce=gene_reduce, reduce_concat=concat
+            normal=gene_normal,
+            normal_concat=concat,
+            reduce=gene_reduce,
+            reduce_concat=concat,
         )
         return genotype

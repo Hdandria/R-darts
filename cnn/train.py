@@ -6,6 +6,9 @@ import sys
 import time
 
 from model import NetworkCIFAR as Network
+from operations import OPS, CellOp
+from genotypes import PRIMITIVES
+import genotypes as genotypes_module 
 import numpy as np
 import torch
 from torch.autograd import Variable
@@ -40,6 +43,10 @@ parser.add_argument("--save", type=str, default="EXP", help="experiment name")
 parser.add_argument("--seed", type=int, default=0, help="random seed")
 parser.add_argument("--arch", type=str, default="DARTS", help="which architecture to use")
 parser.add_argument("--grad_clip", type=float, default=5, help="gradient clipping")
+parser.add_argument(
+    "--recursive_genotype", type=str, default=None, 
+    help="Name of the genotype to use as a primitive for recursive evaluation"
+)
 args = parser.parse_args()
 
 args.save = "eval-{}-{}".format(args.save, time.strftime("%Y%m%d-%H%M%S"))
@@ -70,8 +77,38 @@ def main():
     logging.info(f"gpu device = {args.gpu}")
     logging.info("args = %s", args)
 
+    # --------------------------------------------------------------------------
+    # R-DARTS Logic: Setup Ops
+    # --------------------------------------------------------------------------
+    current_ops = OPS
+    
+    if args.recursive_genotype:
+        logging.info(f"[R-DARTS Evaluation] Recursive mode enabled. Loading genotype: {args.recursive_genotype}")
+        try:
+            # Dynamically load the genotype from the genotypes module
+            loaded_genotype = getattr(genotypes_module, args.recursive_genotype)
+            
+            # Create a copy of OPS
+            current_ops = OPS.copy()
+            
+            # Register the new recursive primitive
+            # NOTE: For evaluation (NetworkCIFAR), the genotype string usually contains 
+            # primitive names. If the search found a cell using "darts_v1", 
+            # then "darts_v1" must exist in OPS.
+            
+            primitive_name = args.recursive_genotype.lower()
+            current_ops[primitive_name] = lambda C, stride, affine: CellOp(loaded_genotype, C, stride, affine)
+            
+            logging.info(f"[R-DARTS Evaluation] Added custom op '{primitive_name}' to registry.")
+            
+        except AttributeError:
+            logging.error(f"Genotype '{args.recursive_genotype}' not found in genotypes.py")
+            sys.exit(1)
+
     genotype = eval(f"genotypes.{args.arch}")
-    model = Network(args.init_channels, CIFAR_CLASSES, args.layers, args.auxiliary, genotype)
+    
+    # Pass custom OPS to the network
+    model = Network(args.init_channels, CIFAR_CLASSES, args.layers, args.auxiliary, genotype, ops=current_ops)
     model = model.cuda()
 
     logging.info("param size = %fMB", utils.count_parameters_in_MB(model))

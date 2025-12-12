@@ -1,15 +1,16 @@
-from operations import OPS, FactorizedReduce, Identity, ReLUConvBN
+from operations import OPS as DEFAULT_OPS, FactorizedReduce, Identity, ReLUConvBN
 import torch
 import torch.nn as nn
 from utils import drop_path
-
+from typing import Dict, Callable
 
 class Cell(nn.Module):
-    def __init__(self, genotype, C_prev_prev, C_prev, C, reduction, reduction_prev, scnd=False):
+    def __init__(self, genotype, C_prev_prev, C_prev, C, reduction, reduction_prev, ops=DEFAULT_OPS):
         super().__init__()
         self.C_prev_prev = C_prev_prev
         self.C_prev = C_prev
         self.C = C
+        self.ops = ops
 
         if reduction_prev:
             self.preprocess0 = FactorizedReduce(C_prev_prev, C)
@@ -17,16 +18,12 @@ class Cell(nn.Module):
             self.preprocess0 = ReLUConvBN(C_prev_prev, C, 1, 1, 0)
         self.preprocess1 = ReLUConvBN(C_prev, C, 1, 1, 0)
 
-        if scnd:
-            op_names, indices = zip(*genotype, strict=True)
-            concat = [len(genotype) // 2 + 1]
+        if reduction:
+            op_names, indices = zip(*genotype.reduce, strict=True)
+            concat = genotype.reduce_concat
         else:
-            if reduction:
-                op_names, indices = zip(*genotype.reduce, strict=True)
-                concat = genotype.reduce_concat
-            else:
-                op_names, indices = zip(*genotype.normal, strict=True)
-                concat = genotype.normal_concat
+            op_names, indices = zip(*genotype.normal, strict=True)
+            concat = genotype.normal_concat
         self._compile(C, op_names, indices, concat, reduction)
 
     def _compile(self, C, op_names, indices, concat, reduction):
@@ -38,14 +35,9 @@ class Cell(nn.Module):
         self._ops = nn.ModuleList()
         for name, index in zip(op_names, indices, strict=True):
             stride = 2 if reduction and index < 2 else 1
-            op = OPS[name](C, stride, True)
+            op = self.ops[name](C, stride, True)
             self._ops += [op]
         self._indices = indices
-
-    def show_state(self):
-        print("C_prev_prev: ", self.C_prev_prev)
-        print("C_prev: ", self.C_prev)
-        print("C : ", self.C)
 
     def forward(self, s0, s1, drop_prob):
         s0 = self.preprocess0(s0)
@@ -58,17 +50,9 @@ class Cell(nn.Module):
             op1 = self._ops[2 * i]
             op2 = self._ops[2 * i + 1]
 
-            # print("h1: ", h1.shape)
-            # print("op1 :", type(op1))
-            # print("h2: ", h2.shape)
-            # print("op2 :", type(op1))
             h1 = op1(h1)
             h2 = op2(h2)
-            # print("\n________________AFTER OPERATION_________________\n")
-            # print("h1: ", h1.shape)
-            # print("op1 :", type(op1))
-            # print("h2: ", h2.shape)
-            # print("op2 :", type(op1))
+            
             if self.training and drop_prob > 0.0:
                 if not isinstance(op1, Identity):
                     h1 = drop_path(h1, drop_prob)
@@ -76,8 +60,6 @@ class Cell(nn.Module):
                     h2 = drop_path(h2, drop_prob)
             s = h1 + h2
             states += [s]
-        # print("Here is states lenght : ", len(states))
-        # print("Here is self.concat : ", self._concat)
         return torch.cat([states[i] for i in self._concat], dim=1)
 
 
@@ -128,10 +110,11 @@ class AuxiliaryHeadImageNet(nn.Module):
 
 
 class NetworkCIFAR(nn.Module):
-    def __init__(self, C, num_classes, layers, auxiliary, genotype):
+    def __init__(self, C, num_classes, layers, auxiliary, genotype, ops=DEFAULT_OPS):
         super().__init__()
         self._layers = layers
         self._auxiliary = auxiliary
+        self.ops = ops
 
         stem_multiplier = 3
         C_curr = stem_multiplier * C
@@ -148,7 +131,7 @@ class NetworkCIFAR(nn.Module):
                 reduction = True
             else:
                 reduction = False
-            cell = Cell(genotype, C_prev_prev, C_prev, C_curr, reduction, reduction_prev)
+            cell = Cell(genotype, C_prev_prev, C_prev, C_curr, reduction, reduction_prev, ops=ops)
             reduction_prev = reduction
             self.cells += [cell]
             C_prev_prev, C_prev = C_prev, cell.multiplier * C_curr
@@ -174,10 +157,11 @@ class NetworkCIFAR(nn.Module):
 
 
 class NetworkImageNet(nn.Module):
-    def __init__(self, C, num_classes, layers, auxiliary, genotype):
+    def __init__(self, C, num_classes, layers, auxiliary, genotype, ops=DEFAULT_OPS):
         super().__init__()
         self._layers = layers
         self._auxiliary = auxiliary
+        self.ops = ops
 
         self.stem0 = nn.Sequential(
             nn.Conv2d(3, C // 2, kernel_size=3, stride=2, padding=1, bias=False),
@@ -203,7 +187,7 @@ class NetworkImageNet(nn.Module):
                 reduction = True
             else:
                 reduction = False
-            cell = Cell(genotype, C_prev_prev, C_prev, C_curr, reduction, reduction_prev)
+            cell = Cell(genotype, C_prev_prev, C_prev, C_curr, reduction, reduction_prev, ops=ops)
             reduction_prev = reduction
             self.cells += [cell]
             C_prev_prev, C_prev = C_prev, cell.multiplier * C_curr

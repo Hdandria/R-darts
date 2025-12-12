@@ -7,6 +7,9 @@ import time
 
 from architect import Architect
 from model_search import Network
+from operations import OPS, CellOp
+from genotypes import PRIMITIVES
+import genotypes as genotypes_module # To look up genotypes dynamically
 import numpy as np
 import torch
 from torch.autograd import Variable
@@ -47,6 +50,11 @@ parser.add_argument(
 parser.add_argument(
     "--arch_weight_decay", type=float, default=1e-3, help="weight decay for arch encoding"
 )
+parser.add_argument(
+    "--recursive_genotype", type=str, default=None, 
+    help="Name of the genotype to use as a primitive for recursive search (e.g., 'DARTS_V1')"
+)
+
 args = parser.parse_args()
 
 args.save = "search-{}-{}".format(args.save, time.strftime("%Y%m%d-%H%M%S"))
@@ -77,10 +85,51 @@ def main():
     torch.cuda.manual_seed(args.seed)
     logging.info(f"gpu device = {args.gpu}")
     logging.info(f"args = {args}")
+    
+    # --------------------------------------------------------------------------
+    # R-DARTS Logic: Setup Primitives
+    # --------------------------------------------------------------------------
+    current_primitives = PRIMITIVES
+    current_ops = OPS
+    
+    if args.recursive_genotype:
+        logging.info(f"[R-DARTS] Recursive mode enabled. Loading genotype: {args.recursive_genotype}")
+        try:
+            # Dynamically load the genotype from the genotypes module
+            loaded_genotype = getattr(genotypes_module, args.recursive_genotype)
+            
+            # Create a copy of OPS to avoid polluting the global state for subsequent runs (if any)
+            current_ops = OPS.copy()
+            
+            # Register the new recursive primitive
+            primitive_name = args.recursive_genotype.lower()
+            current_ops[primitive_name] = lambda C, stride, affine: CellOp(loaded_genotype, C, stride, affine)
+            
+            # Extend the primitives list
+            # We keep the standard primitives and add the new one
+            current_primitives = PRIMITIVES + [primitive_name]
+            
+            logging.info(f"[R-DARTS] New search space primitives: {current_primitives}")
+            
+        except AttributeError:
+            logging.error(f"Genotype '{args.recursive_genotype}' not found in genotypes.py")
+            sys.exit(1)
+    else:
+        logging.info("[R-DARTS] Standard mode (Level 0). Using default primitives.")
 
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.cuda()
-    model = Network(args.init_channels, CIFAR_CLASSES, args.layers, criterion)
+    
+    # Initialize Network with potentially recursive primitives
+    model = Network(
+        args.init_channels, 
+        CIFAR_CLASSES, 
+        args.layers, 
+        criterion,
+        primitives=current_primitives,
+        ops=current_ops
+    )
+    
     model = model.cuda()
     logging.info("param size = %fMB", utils.count_parameters_in_MB(model))
 
